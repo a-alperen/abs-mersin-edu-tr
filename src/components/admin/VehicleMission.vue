@@ -7,13 +7,13 @@
       <th>Yakıt Türü</th>
     </tr>
     <tr>
-      <td style="padding: 10px 20px;">33 RK 513</td>
-      <td style="padding: 10px 20px;">OTOKAR SULTAN MAXİ 160S</td>
-      <td style="padding: 10px 20px;">OTOBÜS</td>
-      <td style="padding: 10px 20px;">MOTORİN</td>
+      <td style="padding: 10px 20px;">{{ licensePlate && licensePlate.plaka }}</td>
+      <td style="padding: 10px 20px;">{{ licensePlate && (licensePlate.marka + ' ' + licensePlate.model) }}</td>
+      <td style="padding: 10px 20px;">{{ licensePlate && licensePlate.arac_turu }}</td>
+      <td style="padding: 10px 20px;">{{ licensePlate && licensePlate.yakit_turu }}</td>
     </tr>
   </table>
-  <form @submit.prevent="Submit(licensePlateId)">
+  <form @submit.prevent="Submit()">
     <h2>Görev Kayıt Formu</h2>
     <label style="margin-bottom: 15px;">Görev Türü</label>
     <div class="wrapper">
@@ -56,6 +56,7 @@
         <input type="time" v-model="returnTime">
       </div>
     </div>
+    <label v-if="checkDateError" class="error">Gidiş tarihi, dönüş tarihinden daha büyük olamaz.</label>
     <div class="wrapper">
       <div style="width: 45%;">
         <label>Çıkış KM</label>
@@ -66,6 +67,7 @@
         <input type="text" v-model="returnKilometers">
       </div>
     </div>
+    <label v-if="checkKmError" class="error">Çıkış km, giriş km den daha büyük olamaz.</label>
     <div class="center">
       <button class="submit">Bilgileri Kaydet</button>
     </div>
@@ -74,7 +76,7 @@
     <div class="outer">
       <div class="inner">
         <span>Listelenecek Yıl:</span>
-        <select name="listYear" v-model="searchYear" @change="handleChange(licensePlateId)" style="width: auto;">
+        <select name="listYear" v-model="searchYear" @change="handleYearChange()" style="width: auto;">
           <option v-for="year in years" :key="year" :value="year">{{ year }}</option>
         </select>
       </div>
@@ -91,6 +93,8 @@
         <th style="padding: 10px 20px;">Gidiş Tarihi</th>
         <th style="padding: 10px 20px;">Çıkış KM</th>
         <th style="padding: 10px 20px;">Giriş KM</th>
+        <th style="padding: 5px 10px;"></th>
+        <th style="padding: 5px 0px;"></th>
       </tr>
       <tr v-for="(mission, index) in missions" :key="(mission)">
         <td>{{ index + 1 }}</td>
@@ -100,6 +104,8 @@
         <td>{{ mission.gidis_tarihi }}</td>
         <td>{{ mission.cikis_km }}</td>
         <td>{{ mission.giris_km }}</td>
+        <td><i class="fa-solid fa-arrow-right" @click="updateMission(mission.id)"></i></td>
+        <td><i class="fa-solid fa-xmark" @click="deleteMission(mission.id)"></i></td>
       </tr>
     </table>
   </div>
@@ -108,13 +114,15 @@
 <script setup>
 import getDrivers from "@/composables/getDrivers"
 import getMissions from "@/composables/getMissions"
-import { ref } from "vue"
+import axios from "axios"
+import { computed, onMounted, ref, warn, watch } from "vue"
 
 const baseUrl = 'http://localhost/abs-mersin-edu-tr/api'
 const props = defineProps({
   'licensePlateId': Number
 })
 const searchYear = ref(0)
+const missionId = ref(0)
 const taskType = ref(1)
 const destination = ref('')
 const passenger = ref('')
@@ -127,6 +135,8 @@ const returnTime = ref('')
 const departureKilometers = ref('')
 const returnKilometers = ref('')
 
+const licensePlate = ref(null)
+
 const years = ref([])
 for (let i = 2018; i <= new Date().getFullYear(); i++) { years.value.push(i) }
 
@@ -134,49 +144,105 @@ const { drivers, loadDrivers } = getDrivers()
 loadDrivers(baseUrl+"/sofor.php",'Surucu_Getir_Isim')
 const { missions, loadMissions } = getMissions()
 
-function ExportToExcel() {
-  // Tabloyu Excel'e aktar
-  const table = document.getElementById('excelTable');
-        TableToExcel.convert(table, {
-          name: 'AracGorev_'+searchYear.value+'.xlsx', // Excel dosyasının adı
-          sheet: {
-            name: 'Sheet 1', // Sayfa adı
-          },
-        });
+const checkDateError = computed(() => {
+  return departureDate.value > returnDate.value && (returnDate.value !== '' && departureDate.value !== '')
+})
+const checkKmError = computed(() => {
+  return departureKilometers.value > returnKilometers.value && (returnKilometers.value !== '' && departureKilometers.value !== '')
+})
+const deleteMission = async(id) => {
+  const warning = confirm("İlgili kaydı silmek istediğinize emin misiniz?");
+  if(warning) {
+    try {
+      const res = await axios.post(baseUrl+"/arac_gorev.php", {
+        request: 'AracGorev_Sil',
+        id: id
+      })
+      alert(res.data.message)
+      loadMissions(baseUrl+"/arac_gorev.php","AracGorev_Getir", props.licensePlateId, searchYear.value)
+    }
+    catch(err) {
+      console.log(err)
+    }
+  }
+}
+const updateMission = async(id) => {
+  try {
+    const res = await axios.post(baseUrl+"/arac_gorev.php", {
+      request: 'TekAracGorev_Getir',
+      id: id
+    })
+    missionId.value = res.data.id
+    driverId.value = res.data.arac_id
+    taskType.value = res.data.gorev_turu
+    destination.value = res.data.nereye
+    passenger.value = res.data.kiminle
+    driverId.value = res.data.sofor_id
+    fuelAdvance.value = res.data.yakit_avans
+    departureDate.value = res.data.gidis_tarihi
+    departureTime.value = res.data.gidis_saati
+    returnDate.value = res.data.donus_tarihi
+    returnTime.value = res.data.donus_saati
+    departureKilometers.value = res.data.cikis_km
+    returnKilometers.value = res.data.giris_km
+  }
+  catch(err) {
+    console.log(err)
+  }
 }
 
-function Submit(licensePlateId) {
-  axios.post(baseUrl + "/arac_gorev.php", {
-    request: 'AracGorev_Kaydet',
-    id: licensePlateId,
-    taskType: taskType.value,
-    destination: destination.value,
-    passenger: passenger.value,
-    driverId: driverId.value,
-    fuelAdvance: fuelAdvance.value,
-    departureDate: departureDate.value,
-    departureTime: departureTime.value,
-    returnDate: returnDate.value,
-    returnTime: returnTime.value,
-    departureKilometers: departureKilometers.value,
-    returnKilometers: returnKilometers.value
-  })
-  .then((response) => {
-    loadMissions(baseUrl+"/arac_gorev.php","AracGorev_Getir", licensePlateId, searchYear.value)
-    alert(response.data.message)
-    clearField()
-  })
-  .catch((error) => console.log(error))
+const getLicensePlateInfo = async() => {
+  try {
+    const res = await axios.post(baseUrl+"/arac_gorev.php", {
+      request: 'TekPlaka_Getir',
+      id: props.licensePlateId
+    })
+    licensePlate.value = res.data
+  }
+  catch(err) {
+    console.log(err)
+  }
 }
 
-function handleChange(licensePlateId) {
-  loadMissions(baseUrl+"/arac_gorev.php","AracGorev_Getir", licensePlateId, searchYear.value)
+function Submit() {
+  if(!checkDateError.value && !checkKmError.value) {
+    axios.post(baseUrl + "/arac_gorev.php", {
+      request: 'AracGorev_Kaydet',
+      id: missionId.value,
+      vehicleId: props.licensePlateId,
+      taskType: taskType.value,
+      destination: destination.value,
+      passenger: passenger.value,
+      driverId: driverId.value,
+      fuelAdvance: (fuelAdvance.value !== '') ? fuelAdvance.value : 0,
+      departureDate: departureDate.value,
+      departureTime: departureTime.value,
+      returnDate: returnDate.value,
+      returnTime: returnTime.value,
+      departureKilometers: departureKilometers.value,
+      returnKilometers: returnKilometers.value
+    })
+    .then((response) => {
+      loadMissions(baseUrl+"/arac_gorev.php","AracGorev_Getir", props.licensePlateId, searchYear.value)
+      alert(response.data.message)
+      clearField()
+    })
+    .catch((error) => console.log(error))
+  }
+  else {
+    console.log("Bir yerde hata var.")
+  }
+  
+}
+
+async function handleYearChange() {
+  loadMissions(baseUrl+"/arac_gorev.php","AracGorev_Getir", props.licensePlateId, searchYear.value)
 }
 function returnMissionTypeName(id) {
   return (id == 1) ? 'İç' : 'Dış'
 }
 function clearField() {
-  searchYear.value = 0
+  missionId.value = 0
   taskType.value = 1
   destination.value = ''
   passenger.value = ''
@@ -189,6 +255,20 @@ function clearField() {
   departureKilometers.value = ''
   returnKilometers.value = ''
 }
+function ExportToExcel() {
+  // Tabloyu Excel'e aktar
+  const table = document.getElementById('excelTable');
+        TableToExcel.convert(table, {
+          name: 'AracGorev_'+searchYear.value+'.xlsx', // Excel dosyasının adı
+          sheet: {
+            name: 'Sheet 1', // Sayfa adı
+          },
+        });
+}
+
+onMounted(() => {
+  getLicensePlateInfo()
+})
 </script>
 
 <style scoped>
@@ -257,7 +337,7 @@ function clearField() {
     margin: 0 auto;
   }
   td {
-    padding: 10px 0px;
+    padding: 5px 0px;
   }
   th {
     padding: 5px 35px;
